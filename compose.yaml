@@ -1,0 +1,75 @@
+name: reconcileops
+x-app: &app
+  build: .
+  env_file: .env
+  environment: &environment
+    DATABASE_URL: postgresql+psycopg://reconcileops:local-demo@postgres:5432/reconcileops
+    CELERY_BROKER_URL: redis://redis:6379/0
+    CELERY_RESULT_BACKEND: redis://redis:6379/1
+    REDIS_URL: redis://redis:6379/0
+    MOCK_PROVIDER_URL: http://provider:8001
+    DATA_DIR: /app/data
+    UPLOAD_DIR: /app/data/uploads
+  volumes:
+    - ./data:/app/data
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    provider:
+      condition: service_healthy
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: reconcileops
+      POSTGRES_PASSWORD: local-demo
+      POSTGRES_DB: reconcileops
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reconcileops -d reconcileops"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  provider:
+    build: .
+    env_file: .env
+    command: uvicorn reconcileops.provider.mock_server:mock_provider_app --host 0.0.0.0 --port 8001
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  migrate:
+    <<: *app
+    command: alembic upgrade head
+  web:
+    <<: *app
+    ports:
+      - 127.0.0.1:8000:8000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  worker:
+    <<: *app
+    command: celery -A reconcileops.tasks.celery_app:celery_app worker --loglevel=INFO --concurrency=2
+    depends_on:
+      migrate:
+        condition: service_completed_successfully

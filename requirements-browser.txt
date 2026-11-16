@@ -1,0 +1,2 @@
+# Browser tooling is optional and is kept separate from the app container.
+playwright==1.58.0

@@ -1,0 +1,13 @@
+{
+  "measured_on": "2026-11-16",
+  "python": "3.12.2",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "storage": "isolated in-memory SQLite; not a PostgreSQL throughput claim",
+  "orders": 10000,
+  "events": 0,
+  "findings": 10000,
+  "csv_bytes": 757853,
+  "preview_seconds": 3.3465,
+  "commit_seconds": 15.7243,
+  "snapshot_reconcile_persist_seconds": 3.1591
+}
