@@ -29,7 +29,7 @@ services:
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U reconcileops -d reconcileops"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U reconcileops -d reconcileops"]
       interval: 3s
       timeout: 3s
       retries: 30
@@ -73,3 +73,9 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A reconcileops.tasks.celery_app:celery_app inspect ping --destination celery@$$HOSTNAME --timeout 3"]
+      interval: 10s
+      timeout: 10s
+      start_period: 20s
+      retries: 12

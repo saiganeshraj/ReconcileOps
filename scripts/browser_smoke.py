@@ -1,13 +1,29 @@
 """Exercise the real local stack and save screenshots, trace, and a short recording."""
 
+import csv
+import io
 import json
 import os
+import time
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
 BASE_URL = os.environ.get("SMOKE_BASE_URL", "http://localhost:8000")
-OUTPUT = Path("artifacts/browser")
+OUTPUT = Path(os.environ.get("SMOKE_OUTPUT_DIR", "artifacts/browser"))
+
+
+def wait_for_success(request, path):
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        response = request.get(BASE_URL + path)
+        assert response.ok, response.text()
+        detail = response.json()
+        if detail["status"] == "SUCCEEDED":
+            return detail
+        assert detail["status"] != "FAILED", detail
+        time.sleep(0.25)
+    raise TimeoutError(f"Task did not finish: {path}")
 
 
 def main():
@@ -40,11 +56,7 @@ def main():
         ) as sync_response:
             page.locator("#sync-provider").click()
         sync_id = sync_response.value.json()["sync_id"]
-        page.wait_for_function(
-            """async id => {const r=await fetch('/api/syncs/'+id); return (await r.json()).status==='SUCCEEDED';}""",
-            arg=sync_id,
-            timeout=60000,
-        )
+        wait_for_success(context.request, "/api/syncs/" + sync_id)
         with page.expect_response(
             lambda response: (
                 response.url.endswith("/api/runs") and response.request.method == "POST"
@@ -52,17 +64,18 @@ def main():
         ) as run_response:
             page.get_by_role("button", name="Create run", exact=False).click()
         run_id = run_response.value.json()["id"]
-        page.wait_for_function(
-            """async id => {const r=await fetch('/api/runs/'+id); return (await r.json()).status==='SUCCEEDED';}""",
-            arg=run_id,
-            timeout=60000,
-        )
+        run = wait_for_success(context.request, "/api/runs/" + run_id)
         page.screenshot(path=str(OUTPUT / "03-runs.png"), full_page=True)
+        assert (run["orders_count"], run["events_count"], run["findings_count"]) == (6, 6, 7), run
         page.locator('nav button[data-page="findings"]').click()
+        page.locator('#filters input[name="run_id"]').fill(run_id)
         page.locator('#filters input[name="order_id"]').fill("O102")
         page.get_by_role("button", name="Apply filters").click()
-        page.locator("#findings-table button").filter(has_text="Inspect").first.click()
+        page.locator("#findings-table tbody tr").filter(has_text=run_id[:8]).filter(
+            has_text="O102"
+        ).get_by_role("button", name="Inspect", exact=False).click()
         page.locator("#evidence").wait_for(state="visible")
+        page.locator("#source-json").filter(has_text="250.00").wait_for()
         page.locator("#review-note").fill(
             "Browser smoke: checked source rows and provider evidence."
         )
@@ -71,9 +84,17 @@ def main():
         page.screenshot(path=str(OUTPUT / "04-evidence-review.png"), full_page=True)
         response = context.request.get(BASE_URL + "/api/runs/" + run_id + "/findings.csv")
         assert response.ok
-        csv = response.text()
-        assert "AMOUNT_MISMATCH" in csv and "MISSING_PAYMENT" in csv
-        (OUTPUT / "findings.csv").write_text(csv, encoding="utf-8")
+        csv_text = response.text()
+        assert "AMOUNT_MISMATCH" in csv_text and "MISSING_PAYMENT" in csv_text
+        exported = list(csv.DictReader(io.StringIO(csv_text)))
+        assert len(exported) == 7 and all(row["run_id"] == run_id for row in exported)
+        reviewed = next(row for row in exported if row["entity_id"] == "O102")
+        assert reviewed["status"] == "RESOLVED"
+        assert (
+            reviewed["resolution_note"]
+            == "Browser smoke: checked source rows and provider evidence."
+        )
+        (OUTPUT / "findings.csv").write_text(csv_text, encoding="utf-8")
         page.locator('nav button[data-page="audit"]').click()
         page.locator("#audit-table").filter(has_text="RESOLVE_FINDING").wait_for()
         page.screenshot(path=str(OUTPUT / "05-audit.png"), full_page=True)
@@ -105,9 +126,7 @@ def main():
         context.tracing.stop(path=str(OUTPUT / "trace.zip"))
         context.close()
         browser.close()
-        print(
-            "Browser smoke passed; screenshots, recording, export, and trace are in artifacts/browser."
-        )
+        print(f"Browser smoke passed; screenshots, recording, export, and trace are in {OUTPUT}.")
 
 
 if __name__ == "__main__":

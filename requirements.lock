@@ -39,7 +39,7 @@ python-dateutil==2.9.0.post0
 python-dotenv==1.2.4
 python-multipart==0.0.33
 PyYAML==6.0.3
-redis==5.3.1
+redis==6.4.0
 ruff==0.17.5
 six==1.17.0
 SQLAlchemy==2.1.8
